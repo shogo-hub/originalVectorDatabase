@@ -1,8 +1,0 @@
-create HNSW
-
-NSW creator
-1.add Node based on designated the number of friend 
-2.
-
-
-HNSW
