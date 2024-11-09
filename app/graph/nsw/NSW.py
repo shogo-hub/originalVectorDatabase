@@ -2,18 +2,15 @@
 #edge management
     #find closest Node -> count -> if there is space ,add-> 
 import numpy as np
-
-
-
-
+from ...nodeManager.sortManager.heap import Heap
 
 
 
 
 #Adding link: 
-    #1. determine thenearest neighbors in the current layer using a distance 
-    #2.establish links to theese nearest neighbor 
-
+    # traverse link 
+        #adding isiting list
+        #exchange with best
 class NSW:
     """each element is """
     def __init__(self,maximumFriend:int) -> None:
@@ -22,8 +19,11 @@ class NSW:
 
     #<Creating graph>-----------------------------------------
     def createGraph(self):
+
+
+
     #<finding node in graph>-----------------------------------
-    def findClosestNodeInNSW(self,entryNodeId:int,queryVector:np.array,ef:int)->tuple:
+    def findClosestNodeInNSW(self,entryNodeId:int,queryVector:np.array,ef:int,moreThanThresholds:list,threshold:int=1,isLastLayer=False)->tuple:
         """
         find Nearest Node list in this layer
         Argument:
@@ -33,23 +33,24 @@ class NSW:
         Return:
             metaDataOfVector(tuple)(distance,id of Node)
         """
+        
         #get distance
         nearestDistance = np.linalg.norm(self.Nodes[entryNodeId].embeddingVector - queryVector)
-        best = (nearestDistance,entryNodeId)
-        #set nearest navigable search list
-        nns = [best]
+        entryData = (nearestDistance,entryNodeId)
+        #Prelimianary best node(consisting distance and node)
+        nns = [entryData]
         #get visited node set
-        visit = set(best)
+        visit = set(entryData)
         # List of candidates
-        candidates = [best]
+        candidates = [entryData]
         #sort candidate node by distance
         heapify(candidates)
 
         #while candidateNodes exist
         while candidates:
-            #get closest Node
+            #get closest Node and implement max sort
             currentBest  = heapop(candidates)
-            #if cannot find closer node from candidate , break
+            #+++if 
             if nns[-1][0] > candidateNode[0]:
                 break
             #loop through all nearest neighbors to the candidate vector

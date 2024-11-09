@@ -1,21 +1,34 @@
-create HNSW
+Requrement:
+    Algorithm
+        1.document admin 
+        2.embeddding
+        3.searching engine
+    Function 
+        1document management
+            1.adding document  
+            2.deleting document 
+            3.document management
+        2.setting threshold
+        3.setting cost management
+            1.set limit per month
+        4.user authentificaton 
+        5.Alerting system 
+            limiting cost or amount document(and usage of capacity)
+        6.adding meta data for document
 
-NSW creator
-1.add Node based on designated the number of friend 
-2.
-
-
-HNSW
 
 
 HNSW:80 %
 NSW:80%
 sort: 100%
 
-rest 
+
 embedding(money limitation)
 additional function:replace get all more than threshold(by user hyperparameter)
 postgresql(store and delete by user manipulation)
 document->read, ocr-> text and save
 
+
+accomplish 
+HNSW, NSW ,search about the way creating 
 
