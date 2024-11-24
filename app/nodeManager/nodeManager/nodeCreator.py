@@ -1,7 +1,8 @@
-from ..sortManager.heap import Heap
+from ..sortManager.heapSort.heap import Heap
 
 
 class Node:
+    
     def __init__(self,id:int,friendNode,embeddingVector,next_layer_index:int):
         self.friendList = []   # later replace list with heap
         self.idToRefference = id
