@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  algorithm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: new-hnsw
+    volumes:
+      - .:/src
+
