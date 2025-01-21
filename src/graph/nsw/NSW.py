@@ -139,8 +139,7 @@ class NSW:
             # Step 3: Iterate through the neighbors (friend list)
             for neighborNode in closestNode.friendList:
                 # Calculate the similarity to the neighbor
-                similarity = self.calculateDistance(inputNode, neighborNode)
-                
+                similarity = self.calculateDistance(inputNode, neighborNode)               
 
                 #if seze of nns is less than ef,then add 
                 if nns.getSize() < ef:
@@ -369,13 +368,37 @@ class NSW:
                 # Recursively process the child node with reduced depth
                 self.createNodesUpToDepth(depth=depth - 1, node=childNode)
 
-    def addToNN(subjectiveNode,objectiveNode,friendListSize=30):
+    def addToNN(self,subjectiveNode:Node,objectiveNode:Node,friendListSize:int=30):
         """Add objetive node to subjectiveNode's friend list"""
+        
+        # TODO: By incorporating queue , I will implement BFS untill find the place store objective node 
         #Case:have space to add
+        if len(subjectiveNode.friendList) < friendListSize:
+            similarity = self.getCosine_similarity(vector1st=subjectiveNode.vector,vector2nd=objectiveNode.vector)
+            subjectiveNode.friendList.append(objectiveNode)
+            subjectiveNode.sortFriendList()
         #Case:No space to add
+        else:
+            similairity = self.getCosine_similarity(vector1st=subjectiveNode.vector,vector2nd=objectiveNode.vector)
             #Case: more similar than farther Node
+            if subjectiveNode.friendList[-1][0] < similairity:
+                replacedNode = subjectiveNode.friendList[-1]
+                subjectiveNode.friendList[-1] = (similairity,objectiveNode.id)
+                #Get replaced Node, if on the graph
+                if self.nodes[replacedNode[1]] != None:
+                    replacedNode = self.nodes[replacedNode[1]]
+                else:
+                    #If not, try get from data base 
+                    # TODO:  I will create code to pick data from db
+                    self.databaseManager.
+                #Replacing node
+                similarity = self.getCosine_similarity(vector1st=replacedNode.vector,vector2nd=objectiveNode.vector)
+                objectiveNode.friendList.append((similairity,replacedNode.id))
+                objectiveNode.sortFriendList()
+
             #Case: less similar than farther Node
-                #By BFS, I will try to find the node to add
+            else:
+                #By BFS,I will try to find the node to add
 
         return
     
@@ -505,12 +528,7 @@ class NSW:
         #Case1: No generations(Not last layer)
             #until
         #Case2: With param of generations(Last layer)            
-
-
-
-
-
-        
+   
 
 
 

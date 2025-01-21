@@ -10,7 +10,7 @@ class Node:
         self.vector = vector
         self.next_layer_index = next_layer_index
     
-
+    
     def getId(self):
         return self.id
     
@@ -22,4 +22,7 @@ class Node:
     
     def getNext_layer_index(self):
         return self.next_layer_index
+
+    def sortFriendList(self):
+        
     
