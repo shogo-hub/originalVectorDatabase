@@ -198,12 +198,7 @@ class NSW:
             
         Returns:
             None
-        """
-        
-
-
-
-
+        """     
         for node in self.nodes.values():
             # Filter out the deletingNode from the friend list of each node
             node.friendList = [(similarity, friend) for similarity, friend in node.friendList if friend != deletingNode]
@@ -368,38 +363,71 @@ class NSW:
                 # Recursively process the child node with reduced depth
                 self.createNodesUpToDepth(depth=depth - 1, node=childNode)
 
+
+
+
+
+
+    #NOTE: from here disk based coversion version
+
+    def deleteNodeFrom(self,entryPoint:int,deletedNode:Node,isdynamically:bool=None):
+        #Case1 : Statically traverse graph to delte Node
+        #Case2 : dynamically traverse graph and delete Node
+
+
+
+
+
     def addToNN(self,subjectiveNode:Node,objectiveNode:Node,friendListSize:int=30):
         """Add objetive node to subjectiveNode's friend list"""
-        
         # TODO: By incorporating queue , I will implement BFS untill find the place store objective node 
-        #Case:have space to add
-        if len(subjectiveNode.friendList) < friendListSize:
-            similarity = self.getCosine_similarity(vector1st=subjectiveNode.vector,vector2nd=objectiveNode.vector)
-            subjectiveNode.friendList.append(objectiveNode)
-            subjectiveNode.sortFriendList()
-        #Case:No space to add
-        else:
+        subjectiveNodequeue = deque()
+        subjectiveNodequeue.append(subjectiveNode)
+        visited = set()
+        while subjectiveNodequeue:
+            currentNode  = subjectiveNodequeue.popleft()
+
+            if currentNode.id in visited:
+                continue
+            visited.add(currentNode.id)
+
+            # Case 1: Add directly if there's space
+            if len(subjectiveNode.friendList) < friendListSize:
+                similarity = self.getCosine_similarity(vector1st=currentNode.vector,vector2nd=objectiveNode.vector)
+                subjectiveNode.friendList.append(similairity,objectiveNode.id)
+                subjectiveNode.sortFriendList()
+                return
+            
+            # Case 2: Replace if the new node is more similar than the farthest node
             similairity = self.getCosine_similarity(vector1st=subjectiveNode.vector,vector2nd=objectiveNode.vector)
-            #Case: more similar than farther Node
-            if subjectiveNode.friendList[-1][0] < similairity:
-                replacedNode = subjectiveNode.friendList[-1]
-                subjectiveNode.friendList[-1] = (similairity,objectiveNode.id)
-                #Get replaced Node, if on the graph
-                if self.nodes[replacedNode[1]] != None:
-                    replacedNode = self.nodes[replacedNode[1]]
-                else:
-                    #If not, try get from data base 
-                    # TODO:  I will create code to pick data from db
-                    self.databaseManager.
-                #Replacing node
-                similarity = self.getCosine_similarity(vector1st=replacedNode.vector,vector2nd=objectiveNode.vector)
-                objectiveNode.friendList.append((similairity,replacedNode.id))
-                objectiveNode.sortFriendList()
+            if similarity > currentNode.friendList[-1][0]:                
+                #Be more similar than farther Node
+                replacedNodeID = currentNode.friendList[-1][1]
+                replacedNodeSimilarity = currentNode.friendList.pop(-1)
+                currentNode.friendList.append((similarity, objectiveNode.id))
+                currentNode.sortFriendList()
 
-            #Case: less similar than farther Node
-            else:
-                #By BFS,I will try to find the node to add
+                # Retrieve the replaced node from the graph or database
+                replacedNode = self.nodes.get(replacedNodeID)
+                #TODO:I will fix this code later
+                if not replacedNode:
+                    # If not in memory, fetch from database (placeholder for actual logic)
+                    replacedNode = self.databaseManager.get_node(replacedNodeID)
 
+                if replacedNode:
+                    similarityWithObjectiveNode = self.getCosine_similarity(
+                        vector1st=replacedNode.vector, vector2nd=objectiveNode.vector
+                    )
+                    objectiveNode.friendList.append((similarityWithObjectiveNode, replacedNode.id))
+                    objectiveNode.sortFriendList()
+                    return
+                
+            # Case 3: proceed with child Node if cannot add
+            for _, neighborID in currentNode.friendList:
+                neighbor = self.nodes.get(neighborID)
+                if neighbor and neighbor.id not in visited:
+                    subjectiveNodequeue.append(neighbor)         
+            
         return
     
     def findNNStatically(self, entryPoint: Node, inputNode: Node):
@@ -505,38 +533,8 @@ class NSW:
 
         # If local minimum not found after traversing the graph, return an error message
         raise ValueError("Local minimum not found.")
-
-
-
-    
-
-    def createNode(self,id)->Node:
-        return Node
-
-
-
-
-
-    def dynamicallyGetNodes(self,entryPoint:id,generations=None:id):
-        """
-        Dynamically get node via id
-        Params:
-            entryPoint:
-            generations:
-        Returns:
-        """
-        #Case1: No generations(Not last layer)
-            #until
-        #Case2: With param of generations(Last layer)            
+     
    
-
-
-
-
-
-
-
-    
     def appendingToFriendList(self,nodeOne,nodeTwo,similarity):
         """
         If similarity is more than threshold,attempting adding edge
