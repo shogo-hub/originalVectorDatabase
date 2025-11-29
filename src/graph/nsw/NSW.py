@@ -9,551 +9,344 @@ from queue import Queue
 from collections import deque
 
 
-#Create graph
-#Traverse graph
+class NSW_utility:
+    """Utility class for NSW graph operations (stateless, no graph storage)"""
+    def __init__(self, cache_size:int=1000, prefetch_size:int=50, databaseManager=None) -> None:
+        self.cache_size = cache_size
+        self.prefetch_size = prefetch_size
+        self.databaseManager = databaseManager if databaseManager else DatabaseManager()
+        
+        # Lazy Deletion (FAISS-style) - O(1) lookup with set
+        self.deletedNodes = set()
+        
+        # Cache Management
+        self.loaded_node_ids = deque() # FIFO queue for eviction
+
+
+    ####################################################################################################################
     #
-
-class NSW:
-    """each element is """
-    def __init__(self,maximumFriend:int,maxSize:int) -> None:
-        self.maximumFriend = maximumFriend
-        self.maxSize = maxSize
-        self.nodeIdes = {}    #{id:id}
-        self.nodes = {}   #{id:Node}      <= ここいらない代わりにnodeに情報を持たす
-        self.priorityQueue = PriorityQueue(maxSize)
-        self.databaseManager = DatabaseManager()
-
-    #<<Creating graph>>-----------------------------------------
-    def createNewGraph(self):
+    # Node Searching algorithm 
+    #
+    ####################################################################################################################
+    def searchingNearestNode(self, nodes: dict, entryPoint: int, inputNode: Node, layer: int, ef: int = 1) -> list:
         """
-        Take charge of creating new graph
-        """
-
-
-    #<
-    def insertNode(self,entryNode:Node,entryPoint:int):
-        """
-        Brief:
-            Inserts a new node into the graph. It first checks if there is no predecessor, in which case the node is added directly.
-            If a predecessor exists, it searches for the nearest node and attempts to create an edge. If an edge cannot be created, 
-            it incrementally increases the "friend" search range and tries again until successful or the maximum threshold is reached.
-
+        Find the local minimum (candidate of closest nodes in NSW) and return metadata.
+        
         Arguments:
-            entryNode (Node): The node to be inserted into the graph.
-            entryPoint (int): The point in the graph (or existing node) to begin the search for the nearest neighbor.
+            nodes: Dictionary of all nodes {id: Node}
+            entryPoint: The id of entry point
+            inputNode: Subject of comparison node
+            layer: Which layer to search in
+            ef: Size of candidate list
 
-        Returns:
-            bool: True if the node was successfully inserted (i.e., an edge was created), False otherwise.
+        Returns: list of (similarity, Node) tuples
         """
-        #<<Case1:No predecessor>>
-        if len(self.nodes) == None:
-            self.nodes[entryNode.getId()] = entryNode
-            return True
-        
-
-        #<<Case2:With Predecessor>>
-        else:
-            #<find candidate of nearest Node>
-            NearestNodeList:tuple = self.searchingNearestNode(entryPoint=entryPoint,inputNode=entryNode)
-            #If possible to create edge
-            if self.createEdge(subjectNode=NearestNodeList[1],inputNode=entryNode):
-                return True
-
-            
-            #if cannot create edge, go to next closer node and do same for until creating edge(stop condition is do all of node)
-            else:              
-                # if cannot 
-                    #try to expand ef by one and try to find and if reach the num more than length of this graph -> raise error ?
-                for i in range(2,self.maximumFriend):
-                    subjectNode = self.searchingNearestNode(entryPoint=entryNode,inputNode=entryNode,ef=i)[i]
-                    if self.createEdge(subjectNode=subjectNode,inputNode=entryNode):
-                        return True
-                #worst case: cannot create edge
-                return False
-
-    def createEdge(self,subjectNode,inputNode,friendListSize)->bool:
-        """
-        Attempts to create an edge between subjectNode and inputNode by adding inputNode to
-        subjectNode's friend list. If the friend list is full, it will replace the least 
-        similar node if inputNode is more similar.
-
-        Args:
-            subjectNode: The node to which the edge is being added (subject node).
-            inputNode: The node being added to the friend list of subjectNode.
-            friendListSize: The maximum number of friends allowed in subjectNode's friend list.
-        
-        Returns:
-            bool: 
-                - True if the edge was successfully created (i.e., inputNode added to friend list).
-                - False if the edge creation failed (i.e., inputNode wasn't similar enough).
-        """
-        similarity = self.getCosine_similarity(vector1st=subjectNode,vector2nd=inputNode)
-        #if friend node has space
-        if len(subjectNode.friendList)  < friendListSize:
-            #similarity
-            subjectNode.friendList.append((similarity,inputNode))
-            HeapSorter.heapsort(subjectNode.friendList)
-            return True
-        #else,compreing 
-        else:
-            #if input is closer than farthest node
-            if subjectNode.friendList[-1][0] < similarity:
-                #replce
-                subjectNode.friendList[-1] = (similarity,inputNode)
-                HeapSorter.heapsort(subjectNode.friendList)
-                return True
-            else:
-                #fail to creating edge
-                return False
-
-    #<<Searching node from NSW before being disk based>>-------------------------------------------------------------
-    def searchingNearestNode(self, entryPoint: int, inputNode: Node,ef=1) ->tuple:
-        """
-        Find the local minimum(candidate of closest node in NWW) and return meta data 
-        Arguent:
-            entryPoint:the id of entry point
-            inputNode:subject of comparison node
-
-        Returns:tuple (similarity,Node)
-        """
-        #nns is the priority queue
+        # nns is the priority queue
         nns = PriorityQueue(maxSize=ef)
         
         # Case 1: If there are no existing nodes
-        if len(self.nodes) == 0:
+        if len(nodes) == 0:
             return nns.heap
         
         # Initialize the closest node
-        closestNode = self.nodes[entryPoint]
-        similarity = self.calculateDistance(inputNode,closestNode)
-        self.priorityQueue.insert(value=(similarity,closestNode))
-        self.priorityQueue()
+        closestNode = nodes[entryPoint]
+        
+        # Skip if entry point is deleted (lazy deletion check)
+        if entryPoint in self.deletedNodes:
+            # Find first non-deleted node
+            found = False
+            for nodeId, node in nodes.items():
+                if nodeId not in self.deletedNodes:
+                    closestNode = node
+                    found = True
+                    break
+            
+            if not found:
+                return nns.heap  # All nodes deleted
+        
+        # PREFETCH: Ensure entry point is loaded
+        self.prefetch_neighborhood(closestNode, layer)
+        
+        similarity = self.get_distance(inputNode, closestNode)
+        nns.insert(value=(similarity, closestNode))
         
         while True:
-            # Step 1: Calculate the similarity to the current closest node
-            closestsimilarity = self.calculateDistance(inputNode, closestNode)
-            
+            # PREFETCH: Load all neighbors of the current closest node in one batch
+            self.prefetch_neighborhood(closestNode, layer)
+
             # Step 2: Flag to track if a closer node is found
             renewalInfo = False
 
-            # Step 3: Iterate through the neighbors (friend list)
-            for neighborNode in closestNode.friendList:
+            # Step 3: Iterate through the neighbors (layer-specific friend list)
+            # Access layer-specific friendList or fallback to single friendList
+            friendList = closestNode.friendLists.get(layer, []) if hasattr(closestNode, 'friendLists') else closestNode.friendList
+            for _, neighborNode in friendList:
+                # Skip deleted nodes (lazy deletion filter - FAISS-style)
+                if neighborNode.id in self.deletedNodes:
+                    continue
+                
                 # Calculate the similarity to the neighbor
-                similarity = self.calculateDistance(inputNode, neighborNode)               
+                # Note: neighborNode.vector should be loaded now due to prefetch_neighborhood
+                similarity = self.get_distance(inputNode, neighborNode)               
 
-                #if seze of nns is less than ef,then add 
+                # if size of nns is less than ef, then add 
                 if nns.getSize() < ef:
-                    nns.insert(value=(similarity,neighborNode))
+                    nns.insert(value=(similarity, neighborNode))
                     renewalInfo = True
                 
                 # If a closer node is found, update the closest node and similarity
                 else:
-                    if similarity < nns.tail():
-                        #replace 
-                        nns.repalceTail(newTuple=(similarity,neighborNode)) = (similarity,neighborNode)
-                        #implement heap sort
+                    # Compare with the worst candidate in the queue (tail)
+                    # We want to maximize similarity, so if new > worst, we replace.
+                    if similarity > nns.tail()[0]:
+                        # replace 
+                        nns.repalceTail(newTuple=(similarity, neighborNode))
+                        # implement heap sort
                         nns.sortArray()
-                        #turn flag True
+                        # turn flag True
                         renewalInfo = True
             
-                # Base case: when noaddition to nns(father than farthest node in nns)
-                if not renewalInfo:
-                    return nns.heap
-    
-    
-    #<<Deleting node from NSW>>
-    def deleteNode(self, deletingNode):
-        """
-        Deletes a node from the graph, removes it from other nodes' friend lists, and 
-        reconstructs the graph's connectivity.
-
-        Args:
-            deletingNode: The node object to be deleted.
+            # Base case: when no addition to nns (no neighbor was better than what we have)
+            if not renewalInfo:
+                return nns.heap
             
-        Returns:
-            None
-        """
-        #Traverse to find the node which has deleted node at friend listand create 
-
-        #iterate through to find mnn and try to create node between
-
-
-
-        
-        if deletingNode.id in self.nodes:
-            del self.nodes[deletingNode.id]  # Remove the node from the graph
-            # Remove the node from other nodes' friend lists
-            self.deleteNodeFromFriendList(deletingNode)
-            # Rebuild connectivity for the affected nodes after deletion
-            self.reconstructionConnectivity(deletingNode)
-
-
-
-    def deleteNodeFromFriendList(self,deletingNode):
-        """
-        Removes the given node from all other nodes' friend lists.
-
-        Args:
-            deletingNode: The node to be removed from other nodes' friend lists.
+            # Update closestNode to the best candidate found in nns for the next iteration
+            # nns.heap[0] is the best candidate (highest similarity)
+            best_candidate = nns.heap[0][1] 
             
-        Returns:
-            None
-        """     
-        for node in self.nodes.values():
-            # Filter out the deletingNode from the friend list of each node
-            node.friendList = [(similarity, friend) for similarity, friend in node.friendList if friend != deletingNode]
-
-    def deletingNode(self,deletedNode:Node):
-        """
-        Brief:
-
-        Argument:
-
-        Returns:
-
-        """
-        #Step1:get the friend node of deleted node and save
-        temp = deletedNode.friendList
-        #step2:delete node
-        #delete from nsw
-        del self.nodes[deletedNode.idToRefference]
-        #delete from friend list from node in NSW and get the node which has it
-        nodePossesingDeletedNode = self.deleteNodeFromFriend(self,deletedNode)
-        #step3:rewireing 
-    
-    def deleteNodeFromFriendList(self, deletedNode: Node) -> list:
-        """
-        Brief:
-        This method removes a specified node (`deletedNode`) from the `friendList` of all other nodes 
-        in the network. It returns a list of nodes from which the `deletedNode` was removed.
-
-        Params:
-        deletedNode: Node - The node to be removed from the friend lists.
-
-        Returns:
-        list: A list of nodes that had the `deletedNode` in their `friendList`.
-        """
-        result = []
-
-        # Iterate over all nodes
-        for node in self.nodes:
-            # Iterate through the friendList of each node
-            for index, metaData in enumerate(node.friendList):  # Iterate through friendList properly
-                if metaData[1] == deletedNode:  # Compare node's friend with deletedNode
-                    del node.friendList[index]  # Remove the friend from the list
-                    result.append(node)  # Add node to the result list
-                    break  # Break out of the inner loop after removing the friend
-
-        return result
-
-    
-        
-
-     
-    def rewireEdge(self,parentNodes:list,friendListOfDeletedNode:list):
-        nn = friendListOfDeletedNode[0][1]
-        subOrdinates = friendListOfDeletedNode.remove(nn)
-        #Step1:let nns to replace position of deleted node
-        for parentNode in parentNodes:
-            #add nns to friendList
-            #get distance
-            cosineSimilarity = self.getCosine_similarity(vector1st=parentNode.embeddingVector,vector2nd=nn.embeddingVector)
-            parentNode.friendList.append((cosineSimilarity,nn))
-            HeapSorter.heapsort(parentNode.friendList)
-
-        #step2:rewire subordinate node of deleted node
-
-    def handleRemainNode(self,objectiveNode:Node,remainFriends:list):
-        """
-        Brief:
-        Params:
-        Returns:
-        """
-        #iterate through ojectiveNode untill all of node is fitted in
-        for remainFriend in remainFriends:
-            #find the friend list which accept
-            self.handleRemainNodeHelper(objectiveNode=objectiveNode,subjectiveNode=remainFriend[1])
-        return True
-
-        
-
-        
-
-    def handleRemainNodeHelper(self,objectiveNode:Node,subjectiveNode:Node)->bool:
-        """
-        Brief:
-        Add or update the subjectiveNode in the graph structure based on similarity.
-        
-        Params:
-        - objectiveNode: Node - The starting node for the BFS.
-        - subjectiveNode: Node - The node to be added or updated.
-        
-        Returns:
-        - bool: True if the subjectiveNode was successfully added/updated, False otherwise.
-        """
-        similarity, startingNode = objectiveNode
-        queue = [startingNode]
-
-        while queue:
-            currentNode = queue.pop(0)
-
-            for neighborSimilarity, neighborNode in currentNode.friendList:
-                cosine_similarity = self.getCosine_similarity(
-                    vector1st=neighborNode.embeddingVector, 
-                    vector2nd=subjectiveNode.embeddingVector
-                )
-
-                if len(neighborNode.friendList) < self.maxSize:
-                    neighborNode.friendList.append((cosine_similarity, subjectiveNode))
-                    neighborNode.friendList.sort(key=lambda x: x[0], reverse=True)
-                    return True
-
-                farthestSimilarity, _ = neighborNode.friendList[-1]
-                if cosine_similarity > farthestSimilarity:
-                    neighborNode.friendList[-1] = (cosine_similarity, subjectiveNode)
-                    neighborNode.friendList.sort(key=lambda x: x[0], reverse=True)
-                    return True
-
-            queue.extend(node for _, node in currentNode.friendList)
-
-        return False
-    
-    
-    def findLocalMinimum(self,entryPoint,generations=None):
-        """
-
-        """
-        #Case1 Not last layer
-        #Case2 Last layer
-        #
-
-    
-            
-    def createAllConnectedNodes(self, node):
-        """
-        Recursively creates all connected friend nodes.
-        """
-        # Base case: If the node has no friends, stop recursion
-        if not node.friendNodeIds:
-            return
-
-        # Process each child node recursively
-        for childNodeId in node.friendNodeIds:
-            if childNodeId not in self.nodes:  # Avoid re-adding existing nodes
-                # Create the child node
-                childNode = self.createNode(id=childNodeId)
-                # Add the child node to the nodes dictionary
-                self.nodes[childNode.id] = childNode
-                # Recursively process the child node
-                self.createAllConnectedNodes(node=childNode)
-
-    def createNodesUpToDepth(self,depth,node):
-        """
-        Recursively creates friend nodes up to a specified depth.
-        """
-        # Base case: Stop recursion when depth reaches 0
-        if depth <= 0:
-            return
-
-        # Process each child node recursively
-        for childNodeId in node.friendNodeIds:
-            if childNodeId not in self.nodes:  # Avoid re-adding existing nodes
-                # Create the child node
-                childNode = self.createNode(id=childNodeId)
-                # Recursively process the child node with reduced depth
-                self.createNodesUpToDepth(depth=depth - 1, node=childNode)
-
-
-
-
-
-
-    #NOTE: from here disk based coversion version
-
-    def deleteNodeFrom(self,entryPoint:int,deletedNode:Node,isdynamically:bool=None):
-        #Case1 : Statically traverse graph to delte Node
-        #Case2 : dynamically traverse graph and delete Node
-
-
-
-
-
-    def addToNN(self,subjectiveNode:Node,objectiveNode:Node,friendListSize:int=30):
-        """Add objetive node to subjectiveNode's friend list"""
-        # TODO: By incorporating queue , I will implement BFS untill find the place store objective node 
-        subjectiveNodequeue = deque()
-        subjectiveNodequeue.append(subjectiveNode)
-        visited = set()
-        while subjectiveNodequeue:
-            currentNode  = subjectiveNodequeue.popleft()
-
-            if currentNode.id in visited:
-                continue
-            visited.add(currentNode.id)
-
-            # Case 1: Add directly if there's space
-            if len(subjectiveNode.friendList) < friendListSize:
-                similarity = self.getCosine_similarity(vector1st=currentNode.vector,vector2nd=objectiveNode.vector)
-                subjectiveNode.friendList.append(similairity,objectiveNode.id)
-                subjectiveNode.sortFriendList()
-                return
-            
-            # Case 2: Replace if the new node is more similar than the farthest node
-            similairity = self.getCosine_similarity(vector1st=subjectiveNode.vector,vector2nd=objectiveNode.vector)
-            if similarity > currentNode.friendList[-1][0]:                
-                #Be more similar than farther Node
-                replacedNodeID = currentNode.friendList[-1][1]
-                replacedNodeSimilarity = currentNode.friendList.pop(-1)
-                currentNode.friendList.append((similarity, objectiveNode.id))
-                currentNode.sortFriendList()
-
-                # Retrieve the replaced node from the graph or database
-                replacedNode = self.nodes.get(replacedNodeID)
-                #TODO:I will fix this code later
-                if not replacedNode:
-                    # If not in memory, fetch from database (placeholder for actual logic)
-                    replacedNode = self.databaseManager.get_node(replacedNodeID)
-
-                if replacedNode:
-                    similarityWithObjectiveNode = self.getCosine_similarity(
-                        vector1st=replacedNode.vector, vector2nd=objectiveNode.vector
-                    )
-                    objectiveNode.friendList.append((similarityWithObjectiveNode, replacedNode.id))
-                    objectiveNode.sortFriendList()
-                    return
-                
-            # Case 3: proceed with child Node if cannot add
-            for _, neighborID in currentNode.friendList:
-                neighbor = self.nodes.get(neighborID)
-                if neighbor and neighbor.id not in visited:
-                    subjectiveNodequeue.append(neighbor)         
-            
-        return
-    
-    def findNNStatically(self, entryPoint: Node, inputNode: Node):
-        """ Find the local minimum from full graph based on cosine similarity """
-        
-        node = entryPoint
-        nodeQueue = deque([node])  # Using deque for an efficient queue implementation
-        isProceeding = True  # Flag to track if we should continue searching
-        maxSimilarity = float('-inf')  # Initialize max similarity to a very low value
-        similarestNode = None  # Initialize the most similar node variable
-
-        while nodeQueue:  # While there are nodes to process in the queue
-            node = nodeQueue.pop()  # Get the next node to process
-
-            # Calculate similarity with the current node
-            parentSimilarity = self.getCosine_similarity(node.vector, inputNode.vector)
-
-            # Base case: if no children, it's a local minimum
-            if len(node.friendList) == 0:
-                self.addToNN(subjectiveNode=node, objectiveNode=inputNode)
-                break
-
+            # If the best candidate is the same as where we are, we are at a local maximum
+            if best_candidate != closestNode:
+                closestNode = best_candidate
             else:
-                # Iterate over child nodes and calculate similarity
-                for childNode in node.friendList:
-                    childSimilarity = self.getCosine_similarity(childNode.vector, inputNode.vector)
-                    if childSimilarity > parentSimilarity:  # Continue if child is more similar
-                        isProceeding = True
-                    
-                    if childSimilarity > maxSimilarity:  # Update max similarity and most similar node
-                        maxSimilarity = childSimilarity
-                        similarestNode = childNode
+                return nns.heap
 
-                if similarestNode:
-                    nodeQueue.append(similarestNode)  # Add the most similar child to the queue
-
-                # If no child is more similar than the parent, it's a local minimum
-                if not isProceeding:
-                    self.addToNN(subjectiveNode=node, objectiveNode=inputNode)
-                    break  # Exit the loop since we've found the local minimum          
-         
-    def findNNDynamically(self, entryPoint, inputNode, depth):
+    ####################################################################################################################
+    #
+    # NSW Construction algorithm 
+    #
+    ####################################################################################################################
+    def buildNSW(self, nodes: dict, newNode: Node, layer: int, M: int, efConstruction: int, entryPoint: int = None):
         """
-        Finds the local minimum in a Navigable Small World graph
-        by shifting subgraph (disk-based).
-
-        Parameters:
-        - entryPoint: The starting node ID for the search.
-        - inputNode: The target node for similarity comparison.
-        - depth: The depth to which the subgraph should be expanded.
-
-        Returns:
-        - node: The node representing the local minimum.
-        """
-        # Create the starting node from the entry point
-        parentsNode = self.createNode(id=entryPoint)           
-        nodeQueue = [parentsNode]  # Initialize the nodeQueue with the entry node
-
-        nearestSimilarity = float('-inf')  # Initialize with the worst similarity
-        nnId = None  # To store the ID of the best matching node
-        
-        while nodeQueue:     
-            node = nodeQueue.pop(0)  # BFS: Get the next node from the queue
-            # Get similarity score between the current node and the inputNode
-            similarityWithParents = self.getCosine_similarity(vector1st=node.embeddingVector, vector2nd=inputNode.embeddingVector)
-
-            # Initialize isLocalMinimum to track if a better node is found
-            isLocalMinimum = True
-
-            # Compare all child nodes to get the best similarity
-            for childNodeId in node.friendList:
-
-                # If child node is not in memory, load its subgraph
-                if childNodeId not in self.nodes:                    
-                    self.createSubGraph(entryPoint=node.id, depth=depth)
-
-                childNode = self.nodes[childNodeId]
-                similarityWithChild = self.getCosine_similarity(vector1st=childNode.embeddingVector, vector2nd=inputNode.embeddingVector)
-
-                # If the child node is closer than the parent node, update
-                if similarityWithChild > similarityWithParents:
-                    isLocalMinimum = False  # A better node has been found
-                
-                # If a new nearest neighbor is found, update the nearest similarity and node ID
-                if similarityWithChild > nearestSimilarity:
-                    nearestSimilarity = similarityWithChild
-                    nnId = childNodeId  # Mark the best matching neighbor
-
-            # If the parent node remains the closest, add the inputNode to its neighbors
-            if isLocalMinimum:
-                self.addToNN(subjectiveNode=node, objectiveNode=inputNode)
-                return node  # Return the local minimum (parent node)
-
-            # If we reach a leaf node or no more children, stop and return the current node  
-            if len(node.friendList) == 0:
-                self.addToNN(subjectiveNode=node, objectiveNode=inputNode)
-                return node  # Return the leaf node as the local minimum
-
-            # Update the nodeQueue with the best matching child node (if any)
-            if nnId:
-                bestNode = self.nodes[nnId]
-                nodeQueue.append(bestNode)  # Add the best node to the queue for further exploration
-
-        # If local minimum not found after traversing the graph, return an error message
-        raise ValueError("Local minimum not found.")
-     
-   
-    def appendingToFriendList(self,nodeOne,nodeTwo,similarity):
-        """
-        If similarity is more than threshold,attempting adding edge
+        NSW construction (HNSW paper compliant).
         
         Arguments:
-            nodeOne: first candidate node 
-            nodeTwo: secound candidate node 
+            nodes: Dictionary of all nodes {id: Node}
+            newNode: The node to insert into the NSW graph
+            layer: Which layer to build connections in
+            M: Maximum number of connections per node
+            efConstruction: Size of candidate list for construction
+            entryPoint: The starting node ID for search (if None, uses a random node)
         
         Returns:
-            float: The cosine similarity between the two vectors.
+            bool: True if insertion successful, False otherwise
         """
-        #if similary than farthest node in friendList,then replace
-        if nodeOne.friendNode[-1][0] < similarity:
-            nodeOne.friendNode[-1] = (similarity,nodeTwo)
-            nodeOne.friendNode
-            HeapSorter.heapsort(nodeOne.friendNode)
+        # Step 1: Handle first node case
+        if len(nodes) == 0:
+            nodes[newNode.getId()] = newNode
+            return True
+        
+        # Step 2: Set default entry point
+        if entryPoint is None:
+            entryPoint = list(nodes.keys())[0]
+        
+        # Step 3: Find nearest neighbors (ef candidates)
+        candidates = self.searchingNearestNode(
+            nodes=nodes,
+            entryPoint=entryPoint,
+            inputNode=newNode,
+            layer=layer,
+            ef=efConstruction
+        )
+        
+        # Step 4: Select M neighbors from candidates (pruning)
+        selectedNeighbors = self.selectNeighbors(newNode, candidates, M)
+        
+        # Step 5: Add new node to graph
+        nodes[newNode.getId()] = newNode
+        
+        # Step 6: Add bidirectional links
+        for similarity, neighborNode in selectedNeighbors:
+            # Add neighbor to newNode's friend list at this layer
+            self._addToFriendList(newNode, neighborNode, similarity, layer)
+            
+            # Add newNode to neighbor's friend list with pruning
+            self.connectNodes(neighborNode, newNode, layer, M, similarity)
+        
+        return True
+    
+    def _addToFriendList(self, node: Node, targetNode: Node, similarity: float, layer: int):
+        """
+        Helper: Add targetNode to node's friend list at specified layer.
+        
+        Arguments:
+            node: Node whose friend list will be updated
+            targetNode: Node to add
+            similarity: Similarity score
+            layer: Which layer to add to
+        """
+        if hasattr(node, 'friendLists'):
+            # Multi-layer node structure
+            if layer not in node.friendLists:
+                node.friendLists[layer] = []
+            node.friendLists[layer].append((similarity, targetNode))
+        else:
+            # Single-layer node structure (backward compatibility)
+            node.friendList.append((similarity, targetNode))
+    
+    def selectNeighbors(self, queryNode: Node, candidates: list, M: int) -> list:
+        """
+        Select M neighbors from candidates (HNSW paper Algorithm 4 - simple heuristic).
+        
+        Arguments:
+            queryNode: The query node
+            candidates: List of (similarity, node) tuples
+            M: Number of neighbors to select
+        
+        Returns:
+            List of selected (similarity, node) tuples (at most M items)
+        """
+        # Simple heuristic: select top M by similarity
+        # For more advanced pruning, implement diversity-based selection
+        sortedCandidates = sorted(candidates, key=lambda x: x[0], reverse=True)
+        return sortedCandidates[:M]
+    
+    def connectNodes(self, node1: Node, node2: Node, layer: int, Mmax: int, similarity: float = None):
+        """
+        Add edge from node1 to node2 with pruning (HNSW paper compliant).
+        
+        Arguments:
+            node1: Node to add edge from
+            node2: Node to connect to
+            layer: Which layer to add connection in
+            Mmax: Maximum connections for node1
+            similarity: Precomputed similarity (if None, will calculate)
+        
+        Returns:
+            None
+        """
+        # Calculate similarity if not provided
+        if similarity is None:
+            similarity = self.get_distance(node1, node2)
+        
+        # Add node2 to node1's friend list at specified layer
+        self._addToFriendList(node1, node2, similarity, layer)
+        
+        # Get current friendList for this layer
+        friendList = node1.friendLists.get(layer, []) if hasattr(node1, 'friendLists') else node1.friendList
+        
+        # If exceeds Mmax, prune to keep best M connections
+        if len(friendList) > Mmax:
+            # Prune: select best Mmax neighbors from current friends
+            pruned = self.selectNeighbors(node1, friendList, Mmax)
+            if hasattr(node1, 'friendLists'):
+                node1.friendLists[layer] = pruned
+            else:
+                node1.friendList = pruned
+    
+    ####################################################################################################################
+    #
+    # Cache and Distance Management
+    #
+    ####################################################################################################################
+    def _ensure_vector_loaded(self, node: Node):
+        """
+        Ensures the node has its vector loaded. If not, triggers prefetching 
+        of this node and its neighbors (Topology-based Prefetching).
+        """
+        if node.vector is not None:
+            return
 
+        # Strategy: BFS to find relevant nodes (self + neighbors) to fill the batch
+        ids_to_fetch = []
+        nodes_to_update = []
+        
+        queue = deque([node])
+        visited = {node.id}
+        
+        while queue and len(ids_to_fetch) < self.prefetch_size:
+            curr = queue.popleft()
+            
+            # If vector is missing, mark for fetching
+            if curr.vector is None:
+                ids_to_fetch.append(curr.id)
+                nodes_to_update.append(curr)
+            
+            # Add friends to queue to prefetch their vectors too
+            # Try layer 0 first, fallback to friendList
+            friendList = curr.friendLists.get(0, []) if hasattr(curr, 'friendLists') else curr.friendList
+            for _, friend in friendList:
+                if friend.id not in visited:
+                    visited.add(friend.id)
+                    queue.append(friend)
+        
+        # Fetch batch from DB
+        if ids_to_fetch:
+            vectors_map = self.databaseManager.get_vectors(ids_to_fetch)
+            
+            for node_obj in nodes_to_update:
+                if node_obj.id in vectors_map:
+                    node_obj.vector = vectors_map[node_obj.id]
+                    self.loaded_node_ids.append(node_obj.id)
 
-    def getCosine_similarity(self,vector1st:np.ndarray, vector2nd:np.ndarray):
+    def _manage_cache(self, nodes: dict):
+        """
+        Evicts old vectors if cache exceeds size.
+        
+        Arguments:
+            nodes: Dictionary of all nodes {id: Node}
+        """
+        while len(self.loaded_node_ids) > self.cache_size:
+            evict_id = self.loaded_node_ids.popleft()
+            # Only unload if it's still in the graph
+            if evict_id in nodes:
+                nodes[evict_id].vector = None
+
+    def get_distance(self, node1: Node, node2: Node) -> float:
+        """
+        Calculates distance, ensuring vectors are loaded from disk if necessary.
+        """
+        self._ensure_vector_loaded(node1)
+        self._ensure_vector_loaded(node2)
+        return self.getCosine_similarity(node1.vector, node2.vector)
+
+    def prefetch_neighborhood(self, center_node: Node, layer: int = 0):
+        """
+        Optimized Prefetching:
+        Fetches the center node and ALL its direct neighbors in one batch 
+        BEFORE we start calculating distances.
+        
+        Arguments:
+            center_node: The node whose neighborhood to prefetch
+            layer: Which layer's friendList to prefetch from
+        """
+        ids_to_fetch = []
+        nodes_to_update = []
+
+        # 1. Check center node
+        if center_node.vector is None:
+            ids_to_fetch.append(center_node.id)
+            nodes_to_update.append(center_node)
+
+        # 2. Check all neighbors (layer-aware)
+        friendList = center_node.friendLists.get(layer, []) if hasattr(center_node, 'friendLists') else center_node.friendList
+        for _, neighbor in friendList:
+            if neighbor.vector is None:
+                ids_to_fetch.append(neighbor.id)
+                nodes_to_update.append(neighbor)
+            
+            # Memory Safety: Stop if we exceed prefetch limit
+            if len(ids_to_fetch) >= self.prefetch_size:
+                break
+        
+        # 3. Batch Fetch
+        if ids_to_fetch:
+            vectors_map = self.databaseManager.get_vectors(ids_to_fetch)
+            for node_obj in nodes_to_update:
+                if node_obj.id in vectors_map:
+                    node_obj.vector = vectors_map[node_obj.id]
+                    self.loaded_node_ids.append(node_obj.id)
+
+    def getCosine_similarity(self, vector1st: np.ndarray, vector2nd: np.ndarray):
         """
         Calculate the cosine similarity between two vectors.
         
@@ -564,7 +357,6 @@ class NSW:
         Returns:
             float: The cosine similarity between the two vectors.
         """
-
         # Calculate the dot product of A and B
         dot_product = np.dot(vector1st, vector2nd)
         
@@ -576,3 +368,177 @@ class NSW:
         cosine_sim = dot_product / (normOfVector1st * normOfVector2nd)
         
         return cosine_sim
+
+    ####################################################################################################################
+    #
+    # Lazy Deletion (FAISS-style) - Simple and Fast
+    #
+    ####################################################################################################################
+    def markDeleted(self, nodeId: int):
+        """
+        Mark a node as deleted (O(1) operation).
+        
+        This uses lazy deletion strategy (FAISS-style):
+        - Fast: O(1) time complexity
+        - No graph rewiring needed
+        - Deleted nodes are filtered during search
+        - Applies to ALL layers
+        
+        Arguments:
+            nodeId: ID of node to mark as deleted
+        
+        Returns:
+            bool: True if marked successfully
+        """
+        self.deletedNodes.add(nodeId)
+        return True
+    
+    def unmarkDeleted(self, nodeId: int):
+        """
+        Unmark a previously deleted node (restore it).
+        
+        Arguments:
+            nodeId: ID of node to restore
+        
+        Returns:
+            bool: True if unmarked successfully, False if not found
+        """
+        if nodeId in self.deletedNodes:
+            self.deletedNodes.discard(nodeId)
+            return True
+        return False
+    
+    def isDeleted(self, nodeId: int) -> bool:
+        """
+        Check if a node is marked as deleted.
+        
+        Arguments:
+            nodeId: ID of node to check
+        
+        Returns:
+            bool: True if node is marked as deleted
+        """
+        return nodeId in self.deletedNodes
+    
+    def getDeletionRatio(self, nodes: dict) -> float:
+        """
+        Calculate the ratio of deleted nodes.
+        Useful for deciding when to rebuild the index.
+        
+        Arguments:
+            nodes: Dictionary of all nodes {id: Node}
+        
+        Returns:
+            float: Ratio of deleted nodes (0.0 to 1.0)
+        """
+        if len(nodes) == 0:
+            return 0.0
+        return len(self.deletedNodes) / len(nodes)
+    
+    def clearDeletions(self):
+        """
+        Clear all deletion marks. Typically called after rebuilding the index.
+        """
+        self.deletedNodes.clear()
+    
+    def getDeletedCount(self) -> int:
+        """
+        Get the number of deleted nodes.
+        
+        Returns:
+            int: Number of deleted nodes
+        """
+        return len(self.deletedNodes)
+
+    ####################################################################################################################
+    #
+    # Deleting node with Rewiring (Physical Deletion - O(N) operation)
+    #
+    ####################################################################################################################
+    def deleteNodeWithRewiring(self, nodes: dict, deletedNodeId: int, layer: int, M: int):
+        """
+        Delete node with rewiring strategy (maintains graph connectivity).
+        
+        WARNING: This is O(N) operation. For frequent deletions, use markDeleted() instead.
+        
+        Strategy:
+        1. Identify 'incoming nodes' (nodes that point to the deleted node).
+           - Since HNSW is a directed graph, we must scan all nodes to find these.
+        2. Identify 'outgoing neighbors' (nodes the deleted node points to).
+        3. Rewire: Connect incoming nodes to outgoing neighbors to bridge the gap.
+           (X -> Deleted -> Y  becomes  X -> Y)
+        4. Remove deleted node from graph.
+        
+        Arguments:
+            nodes: Dictionary of all nodes {id: Node}
+            deletedNodeId: ID of node to delete
+            layer: Which layer to delete from
+            M: Maximum connections per node
+        
+        Returns:
+            bool: True if deletion successful
+        """
+        # Step 1: Get the node to delete
+        if deletedNodeId not in nodes:
+            return False
+        
+        deletedNode = nodes[deletedNodeId]
+        
+        # Step 2: Get outgoing neighbors (candidates for rewiring)
+        # These are Y in (X -> Deleted -> Y)
+        outgoing_neighbors = []
+        deleted_friend_list = deletedNode.friendLists.get(layer, []) if hasattr(deletedNode, 'friendLists') else []
+        for _, neighbor in deleted_friend_list:
+            outgoing_neighbors.append(neighbor)
+            
+        # Step 3: Scan ALL nodes to find incoming edges (X -> Deleted)
+        # This is O(N) because we don't have a reverse index
+        for nodeId, node in nodes.items():
+            if nodeId == deletedNodeId:
+                continue
+                
+            # Access friend list safely
+            if hasattr(node, 'friendLists'):
+                if layer not in node.friendLists:
+                    continue
+                friendList = node.friendLists[layer]
+            else:
+                friendList = node.friendList
+            
+            # Check if this node connects to deletedNode
+            is_connected = False
+            new_friend_list = []
+            
+            for sim, friend in friendList:
+                if friend.id == deletedNodeId:
+                    is_connected = True
+                    # Do not add deleted node to new list
+                else:
+                    new_friend_list.append((sim, friend))
+            
+            # If connection found, update and rewire
+            if is_connected:
+                # 3a. Update friend list (remove deleted node)
+                if hasattr(node, 'friendLists'):
+                    node.friendLists[layer] = new_friend_list
+                else:
+                    node.friendList = new_friend_list
+                
+                # 3b. Rewire: Try to connect this node (X) to deleted node's neighbors (Y)
+                for neighbor_y in outgoing_neighbors:
+                    # Avoid self-loops and duplicates (connectNodes handles duplicates usually, but good to check)
+                    if neighbor_y.id == node.id:
+                        continue
+                        
+                    # Calculate distance and try to connect
+                    # connectNodes will handle pruning if list exceeds M
+                    self.connectNodes(node, neighbor_y, layer, M, similarity=None)
+
+        # Step 4: Remove deleted node from graph
+        # Note: We do NOT delete the node from the 'nodes' dictionary here.
+        # This utility class only handles rewiring. The actual removal of the node object
+        # from the global storage should be handled by the caller (HNSW manager)
+        # after ensuring it is removed from all layers.
+        # del nodes[deletedNodeId]  <-- REMOVED
+        
+        return True
