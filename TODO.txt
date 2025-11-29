@@ -1,0 +1,4 @@
+Make loading from DB asynchronously 
+Implement Persinting information to DB
+Check code 
+Think about how to implement test.
