@@ -7,7 +7,7 @@ class Node:
         self.friendList = []   #[(similairty,id)]
         self.friendList = []   #[id:Node]
         self.id = id
-        self.vector = vector
+        self.vector = None
         self.next_layer_index = next_layer_index
     
     
